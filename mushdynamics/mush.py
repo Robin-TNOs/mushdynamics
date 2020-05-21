@@ -18,13 +18,14 @@ from . import tdma
 def schema():
     """ Description of the discretization for numerical scheme"""
     print(" <-1 volume-> \n\
-||-----.-----|-----.-----|       ...      .-----|-----.-----|-----.        ...       -----.-----|-----.-----||  \n\
-       0     0     1     1                                                                N-1  N-1    N          \n\
- 0   1/2dr  dr   3/2dr              |           |           |                       |           |                \n\
-             ->          ->               |     ->    |     ->    |                       |     ->    |            \n\
- V0          V1          V2               |    V_i-1  |    V_i    |                       |    V_N-1  |     V_N   \n\
-      phi0        phi1                  phi_i-1     phi_i      phi_i+1                phi_N-1      phi_N         \n\
+||-----.-----|-----.-----|       ...      .-----|-----.-----|-----.        ...       -----.-----|-----.-----||   \n\
+ 0     0     1     1     2               i-1    i     i    i+1   i+1                     N-2   N-1   N-1    N    \n\
+ 0   1/2dr  dr   3/2dr              |           |           |                       |           |          N*dr  \n\
+             ->          ->               |     ->    |     ->    |                       |     ->    |          \n\
+ CL          V0          V1               |    V_i-1  |    V_i    |                       |    V_N-2  |     CL   \n\
+      phi0        phi1                  phi_i-1     phi_i      phi_i+1                phi_N-2      phi_N-1       \n\
             DP0         DP1                  DP_i-1                                           DP_N-1           \n")
+            # V : indices de velocity. CL = condition à la limite
 
 
 def fluxlimiterscheme(velocity, variable, dr, options):
@@ -113,8 +114,8 @@ def fluxlimiterscheme(velocity, variable, dr, options):
                     You need to specify psi0, psiN or phi0, phiN")
 
         # minmod
-    # lambdap_up = 0.
-    # lambdam_up = 0.
+    lambdap_up = 0.
+    lambdam_up = 0.
     lambdam_down = 0.
     lambdap_down = 0.
 
@@ -125,13 +126,12 @@ def fluxlimiterscheme(velocity, variable, dr, options):
     _b[0] = vp[0] * (1 - lambdap[0] / 2.) + vm[0] * lambdam[0] / 2. \
         - U0m * (1 - lambdam_down / 2.) - U0p * lambdap_down / 2.
     _c[0] = vm[0] * (1 - lambdam[0] / 2.) + vp[0] * lambdap[0] / 2.
-    _d[0] = (_a[0]*psi0+ _b[0] * variable[0] + _c[0] * variable[1]) +_a[0]*psi0
+    _d[0] = _a[0]*psi0+ _b[0] * variable[0] + _c[0] * variable[1]
 
-    _a[-1] = -vp[-1]
-    _b[-1] = UNp - vm[-1]
-    _c[-1] = UNm
+    _a[-1] = -vp[-1] * (1 - lambdap[-1]/2) - vm[-1] * lambdam[-1]/2
+    _b[-1] = UNp * (1 - lambdap_up/2) + UNm * lambdam_up/2 - vp[-1] * lambdap[-1]/2 - vm[-1] * (1 - lambdam[-1]/2)
+    _c[-1] = UNp * lambdap_up/2 + UNm * (1 - lambdam_up/2)
     _d[-1] = _a[-1] * variable[-2] + _b[-1] * variable[-1] + _c[-1] * psiN
-    _d[-1] = _d[-1] + psiN * _c[-1]
 
     return _a / (2 * dr), _b / (2 * dr), _c / (2 * dr), _d / (2 * dr)
 
@@ -187,20 +187,20 @@ def velocity_Sramek(variable, radius, options, verbose=False):
             (1 - np.sqrt(variable[:-1] * variable[1:])) * \
             (variable[:-1] * variable[1:])**(n/2.)
     elif options["coordinates"] == "spherical":
-        _a = _inter[:-1] / dr**2 * variable[:-1] * variable[1:] * \
+        _a = _inter[:-1] / dr**2 * (variable[:-1] * variable[1:])**(n/2) * \
             radius[:-2]**2 / (radius[0:-2] + dr / 2)**2
         _b = -1. / (delta**2) \
-            - _inter[:-1] / dr**2 * variable[:-1] * variable[1:] * radius[1:-1]**2 / (radius[0:-2] + dr / 2)**2\
-            - _inter[1:] / dr**2 * variable[:-1] * variable[1:] * \
+            - _inter[:-1] / dr**2 * (variable[:-1] * variable[1:])**(n/2) * radius[1:-1]**2 / (radius[0:-2] + dr / 2)**2\
+            - _inter[1:] / dr**2 * (variable[:-1] * variable[1:])**(n/2) * \
             radius[1:-1]**2 / (radius[1:-1] + dr / 2)**2
-        _c = _inter[1:] / dr**2 * variable[:-1] * variable[1:] * \
+        _c = _inter[1:] / dr**2 * (variable[:-1] * variable[1:])**(n/2) * \
             radius[2:]**2 / (radius[1:-1] + dr / 2)**2
         _d = s * radius[1:-1] / options["Ric_adim"] *\
             (1 - np.sqrt(variable[:-1] * variable[1:])) *\
             (variable[:-1] * variable[1:])**(n/2.)
 
         # correction with the term in 4\mu dphi/dr /r
-        correction = + 4.*(variable[1:]-variable[:-1])*variable[1:]*variable[:-1]/dr/radius[1:-1]
+        correction = + 4.*(variable[1:]-variable[:-1])*(variable[1:]*variable[:-1])**(n/2)/dr/radius[1:-1]
         _b = _b + correction
 
     # boundary conditions: V is solved between 0 and N-1,
@@ -293,7 +293,7 @@ def source_spherical_advection(psi, velocity, radius, options):
     """
     dr = radius[1]-radius[0]
     d = np.zeros_like(psi)
-    d[1:-1] = psi[1:-1] * (velocity[1:]+velocity[:-1])/(radius[2:-1]+dr/2)
+    d[1:-1] = psi[1:-1] * (velocity[1:]+velocity[:-1])/(radius[2:-1]-dr/2)
     # V==0 at z=0
     d[0] = psi[0]*velocity[0]/(dr/2)
     if options['BC'] == 'V==0':
